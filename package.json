@@ -1,5 +1,6 @@
 {
 	"dependencies": {
+		"@aragon/os": "^4.1.0-rc.1",
 		"openzeppelin-solidity": "2.0.0",
 		"rxjs": "6.2.2"
 	}

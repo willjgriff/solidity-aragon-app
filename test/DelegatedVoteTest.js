@@ -1,7 +1,7 @@
 const VoteToken = artifacts.require("VoteToken.sol")
 const DelegationTree = artifacts.require("DelegationTree.sol")
 const DelegatedVote = artifacts.require("DelegatedVote.sol")
-const { assertRevert } = require("./helpers/assertThrow")
+const { assertRevert } = require("@aragon/os/test/helpers/assertThrow")
 const { range, from } = require("rxjs")
 const { mergeMap } = require("rxjs/operators")
 

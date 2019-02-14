@@ -1,7 +1,7 @@
 pragma solidity ^0.4.24;
 
-import "./helpers/ArrayLib.sol";
 import "openzeppelin-solidity/contracts/token/ERC20/IERC20.sol";
+import "./libraries/ArrayLib.sol";
 
 // Add events, will need for UI.
 // Add error messages.

@@ -2,6 +2,7 @@ pragma solidity ^0.4.24;
 
 import "./DelegationTree.sol";
 import "./VoteToken.sol";
+import "./libraries/ArrayLib.sol";
 
 // Ideally we would use the Voting app, however the total vote weight calculation can only be called as an external view function.
 // This is due to it's likely high cost of execution, outside the range of the block gas limit. The Voting app assumes this can be
