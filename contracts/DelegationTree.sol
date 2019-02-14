@@ -6,6 +6,7 @@ import "./libraries/ArrayLib.sol";
 // Add events, will need for UI.
 // Add error messages.
 // Add topic, editable by owner.
+// Use SafeMath.
 contract DelegationTree {
 
     using ArrayLib for address[];
@@ -21,6 +22,7 @@ contract DelegationTree {
         // With an Array, no off chain processing is required.
         // Insertion in an array requires storing 1 address plus the index in the array of that address (uint256) plus array overhead, at least updating length maybe more.
         // Deletion in an Array requires 1 address deletion (gas refund?) and 1 address update, plus updating length.
+        // Also have to think about the upgrade process, Voting implies upgrade issues with Arrays, not sure what they are.
         uint delegatedFromAddressesIndex;
         address[] delegatedFrom;
     }

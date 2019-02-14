@@ -44,7 +44,7 @@ contract DelegatedVote {
         return votedAgainst;
     }
 
-    function undelegatedVoter(address voter) public view returns (bool) {
+    function isUndelegatedVoter(address voter) public view returns (bool) {
         address delegateVoterAddress = delegationTree.getDelegateVoterToAddress(voter);
         return delegateVoterAddress == address(0);
     }
@@ -52,16 +52,16 @@ contract DelegatedVote {
     function vote(bool _inFavour) public {
         Voter storage voter = voters[msg.sender];
 
-        require(undelegatedVoter(msg.sender), "Voter must not have delegated their vote");
+        require(isUndelegatedVoter(msg.sender), "Voter must not have delegated their vote");
         require(!(voter.hasVoted && voter.inFavour == _inFavour), "Already voted in this direction");
 
         if (voter.hasVoted) {
             if (voter.inFavour) {
                 votedFor._removeElement(voter.voteArrayPosition);
-                _updateVoteArrayAndIndices(votedFor, voter.voteArrayPosition);
+                _updateVoteArrayStoredIndices(votedFor, voter.voteArrayPosition);
             } else {
                 votedAgainst._removeElement(voter.voteArrayPosition);
-                _updateVoteArrayAndIndices(votedAgainst, voter.voteArrayPosition);
+                _updateVoteArrayStoredIndices(votedAgainst, voter.voteArrayPosition);
             }
         } else {
             voter.hasVoted = true;
@@ -77,7 +77,7 @@ contract DelegatedVote {
         }
     }
 
-    function _updateVoteArrayAndIndices(address[] memory voteArray, uint256 voteArrayPosition) private {
+    function _updateVoteArrayStoredIndices(address[] memory voteArray, uint256 voteArrayPosition) private {
         if (voteArray.length > 0) {
             address movedVoterAddress = voteArray[voteArrayPosition];
             Voter storage movedVoter = voters[movedVoterAddress];

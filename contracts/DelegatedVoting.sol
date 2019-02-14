@@ -4,8 +4,14 @@ import "@aragon/os/contracts/apps/AragonApp.sol";
 import "@aragon/os/contracts/lib/math/SafeMath.sol";
 import "@aragon/os/contracts/lib/math/SafeMath64.sol";
 import "./miniMeToken/MiniMeToken.sol";
+import "./DelegationTree.sol";
 
-contract Voting is AragonApp {
+/**
+ * Each vote still contains min accepted quorum and support required values which can be displayed on the UI. However, they're not used to
+ * determine execution of anything, just for visibility.
+ */
+
+contract DelegatedVoting is AragonApp {
     using SafeMath for uint256;
     using SafeMath64 for uint64;
 
@@ -22,8 +28,8 @@ contract Voting is AragonApp {
     string private constant ERROR_INIT_SUPPORT_TOO_BIG = "VOTING_INIT_SUPPORT_TOO_BIG";
     string private constant ERROR_CHANGE_SUPPORT_TOO_BIG = "VOTING_CHANGE_SUPP_TOO_BIG";
     string private constant ERROR_CAN_NOT_VOTE = "VOTING_CAN_NOT_VOTE";
-    string private constant ERROR_CAN_NOT_FORWARD = "VOTING_CAN_NOT_FORWARD";
     string private constant ERROR_NO_VOTING_POWER = "VOTING_NO_VOTING_POWER";
+    string private constant ERROR_NO_DELEGATION_TREE = "VOTING_NO_DELEGATION_TREE";
 
     enum VoterState { Absent, Yea, Nay }
 
@@ -32,10 +38,18 @@ contract Voting is AragonApp {
         uint64 snapshotBlock;
         uint64 supportRequiredPct;
         uint64 minAcceptQuorumPct;
-        uint256 yea;
-        uint256 nay;
         uint256 votingPower;
-        mapping (address => VoterState) voters;
+
+        DelegationTree delegationTree;
+        mapping (address => Voter) voters;
+        address[] votedFor;
+        address[] votedAgainst;
+    }
+
+    struct Voter {
+        VoterState voterState;
+        uint voteArrayPosition;
+        bool hasVoted;
     }
 
     MiniMeToken public token;
@@ -48,7 +62,7 @@ contract Voting is AragonApp {
     uint256 public votesLength;
 
     event StartVote(uint256 indexed voteId, address indexed creator, string metadata);
-    event CastVote(uint256 indexed voteId, address indexed voter, bool supports, uint256 stake);
+    event CastVote(uint256 indexed voteId, address indexed voter, bool supports);
     event ChangeSupportRequired(uint64 supportRequiredPct);
     event ChangeMinQuorum(uint64 minAcceptQuorumPct);
 
@@ -118,8 +132,8 @@ contract Voting is AragonApp {
     * @param _metadata Vote metadata
     * @return voteId Id for newly created vote
     */
-    function newVote(string _metadata) external auth(CREATE_VOTES_ROLE) returns (uint256 voteId) {
-        return _newVote(_metadata, true);
+    function newVote(DelegationTree _delegationTree, string _metadata) external auth(CREATE_VOTES_ROLE) returns (uint256 voteId) {
+        return _newVote(_delegationTree, _metadata, true);
     }
 
     /**
@@ -128,12 +142,12 @@ contract Voting is AragonApp {
     * @param _castVote Whether to also cast newly created vote
     * @return voteId id for newly created vote
     */
-    function newVote(string _metadata, bool _castVote)
+    function newVote(DelegationTree _delegationTree, string _metadata, bool _castVote)
     external
     auth(CREATE_VOTES_ROLE)
     returns (uint256 voteId)
     {
-        return _newVote(_metadata, _castVote);
+        return _newVote(_delegationTree, _metadata, _castVote);
     }
 
     /**
@@ -164,10 +178,8 @@ contract Voting is AragonApp {
         uint64 snapshotBlock,
         uint64 supportRequired,
         uint64 minAcceptQuorum,
-        uint256 yea,
-        uint256 nay,
         uint256 votingPower,
-        bytes script
+        address delegationTree
     )
     {
         Vote storage vote_ = votes[_voteId];
@@ -177,20 +189,21 @@ contract Voting is AragonApp {
         snapshotBlock = vote_.snapshotBlock;
         supportRequired = vote_.supportRequiredPct;
         minAcceptQuorum = vote_.minAcceptQuorumPct;
-        yea = vote_.yea;
-        nay = vote_.nay;
         votingPower = vote_.votingPower;
+        delegationTree = address(vote_.delegationTree);
     }
 
     function getVoterState(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (VoterState) {
-        return votes[_voteId].voters[_voter];
+        return votes[_voteId].voters[_voter].voterState;
     }
 
-    function _newVote(string _metadata, bool _castVote)
+    function _newVote(DelegationTree _delegationTree, string _metadata, bool _castVote)
     internal
     returns (uint256 voteId)
     {
-        uint256 votingPower = token.totalSupplyAt(vote_.snapshotBlock);
+        require(_delegationTree != address(0), ERROR_NO_DELEGATION_TREE);
+
+        uint256 votingPower = token.totalSupplyAt(vote_.snapshotBlock); // vote_.snapshotBlock will always be 0. This is some weird lookahead referencing. Can't do this in 0.5
         require(votingPower > 0, ERROR_NO_VOTING_POWER);
 
         voteId = votesLength++;
@@ -200,6 +213,7 @@ contract Voting is AragonApp {
         vote_.supportRequiredPct = supportRequiredPct;
         vote_.minAcceptQuorumPct = minAcceptQuorumPct;
         vote_.votingPower = votingPower;
+        vote_.delegationTree = _delegationTree;
 
         emit StartVote(voteId, msg.sender, _metadata);
 
@@ -216,27 +230,32 @@ contract Voting is AragonApp {
     {
         Vote storage vote_ = votes[_voteId];
 
+
+
+        //*** TO BE DELETED***//
         // This could re-enter, though we can assume the governance token is not malicious
-        uint256 voterStake = token.balanceOfAt(_voter, vote_.snapshotBlock);
-        VoterState state = vote_.voters[_voter];
+//        uint256 voterStake = token.balanceOfAt(_voter, vote_.snapshotBlock);
+//        VoterState state = vote_.voters[_voter].voterState;
+//
+//        // If voter had previously voted, decrease count
+//        if (state == VoterState.Yea) {
+//            vote_.yea = vote_.yea.sub(voterStake);
+//        } else if (state == VoterState.Nay) {
+//            vote_.nay = vote_.nay.sub(voterStake);
+//        }
+//
+//        if (_supports) {
+//            vote_.yea = vote_.yea.add(voterStake);
+//        } else {
+//            vote_.nay = vote_.nay.add(voterStake);
+//        }
+        //*** TO BE DELETED***//
 
-        // If voter had previously voted, decrease count
-        if (state == VoterState.Yea) {
-            vote_.yea = vote_.yea.sub(voterStake);
-        } else if (state == VoterState.Nay) {
-            vote_.nay = vote_.nay.sub(voterStake);
-        }
 
-        if (_supports) {
-            vote_.yea = vote_.yea.add(voterStake);
-        } else {
-            vote_.nay = vote_.nay.add(voterStake);
-        }
 
-        vote_.voters[_voter] = _supports ? VoterState.Yea : VoterState.Nay;
+        vote_.voters[_voter].voterState = _supports ? VoterState.Yea : VoterState.Nay;
 
-        emit CastVote(_voteId, _voter, _supports, voterStake);
-
+        emit CastVote(_voteId, _voter, _supports);
 
     }
 
