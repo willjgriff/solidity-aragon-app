@@ -3,7 +3,7 @@ pragma solidity 0.4.24;
 import "@aragon/os/contracts/apps/AragonApp.sol";
 import "@aragon/os/contracts/lib/math/SafeMath.sol";
 import "@aragon/os/contracts/lib/math/SafeMath64.sol";
-import "./miniMeToken/MiniMeToken.sol";
+import "@aragon/apps-shared-minime/contracts/MiniMeToken.sol";
 import "./DelegationTree.sol";
 
 /**
@@ -30,6 +30,8 @@ contract DelegatedVoting is AragonApp {
     string private constant ERROR_CAN_NOT_VOTE = "VOTING_CAN_NOT_VOTE";
     string private constant ERROR_NO_VOTING_POWER = "VOTING_NO_VOTING_POWER";
     string private constant ERROR_NO_DELEGATION_TREE = "VOTING_NO_DELEGATION_TREE";
+    string private constant ERROR_VOTER_HAS_DELEGATED = "VOTING_VOTER_HAS_DELEGATED";
+    string private constant ERROR_ALREADY_VOTED = "VOTING_ALREADY_VOTED";
 
     enum VoterState { Absent, Yea, Nay }
 
@@ -193,6 +195,18 @@ contract DelegatedVoting is AragonApp {
         delegationTree = address(vote_.delegationTree);
     }
 
+    function getVotedForAddresses(uint256 _voteId) public view returns (address[] memory) {
+        return votes[_voteId].votedFor;
+    }
+
+    function getVotedAgainstAddresses(uint256 _voteId) public view returns (address[] memory) {
+        return votes[_voteId].votedAgainst;
+    }
+
+    function getVoter(uint256 _voteId, address _voted) public view voteExists(_voteId) returns (Voter) {
+        return votes[_voteId].voters[_voter];
+    }
+
     function getVoterState(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (VoterState) {
         return votes[_voteId].voters[_voter].voterState;
     }
@@ -222,6 +236,15 @@ contract DelegatedVoting is AragonApp {
         }
     }
 
+    function _isUndelegatedVoter(address _voter, DelegationTree _delegationTree) internal view returns (bool) {
+        address delegateVoterAddress_ = _delegationTree.getDelegateVoterToAddress(_voter);
+        return delegateVoterAddress_ == address(0);
+    }
+
+    function _notVotedInDirection(Voter memory _voter, bool _supports) internal view returns (bool) {
+        return !(_voter.hasVoted && _voter.votedState == _supports);
+    }
+
     function _vote(
         uint256 _voteId,
         bool _supports,
@@ -229,28 +252,31 @@ contract DelegatedVoting is AragonApp {
     ) internal
     {
         Vote storage vote_ = votes[_voteId];
+        Voter storage voter_ = vote_.voters[msg.sender];
 
+        require(_isUndelegatedVoter(msg.sender, vote_.delegationTree), ERROR_VOTER_HAS_DELEGATED);
+        require(_notVotedInDirection(voter_, _supports), ERROR_ALREADY_VOTED);
 
-
-        //*** TO BE DELETED***//
-        // This could re-enter, though we can assume the governance token is not malicious
-//        uint256 voterStake = token.balanceOfAt(_voter, vote_.snapshotBlock);
-//        VoterState state = vote_.voters[_voter].voterState;
-//
-//        // If voter had previously voted, decrease count
-//        if (state == VoterState.Yea) {
-//            vote_.yea = vote_.yea.sub(voterStake);
-//        } else if (state == VoterState.Nay) {
-//            vote_.nay = vote_.nay.sub(voterStake);
-//        }
-//
-//        if (_supports) {
-//            vote_.yea = vote_.yea.add(voterStake);
+//        if (voter_.hasVoted) {
+//            if (voter_.inFavour) {
+//                votedFor._removeElement(voter_.voteArrayPosition);
+//                _updateVoteArrayStoredIndices(votedFor, voter_.voteArrayPosition);
+//            } else {
+//                votedAgainst._removeElement(voter_.voteArrayPosition);
+//                _updateVoteArrayStoredIndices(votedAgainst, voter_.voteArrayPosition);
+//            }
 //        } else {
-//            vote_.nay = vote_.nay.add(voterStake);
+//            voter_.hasVoted = true;
+//            voter_.inFavour = _inFavour;
 //        }
-        //*** TO BE DELETED***//
-
+//
+//        if (_inFavour) {
+//            voter_.voteArrayPosition = votedFor.length;
+//            votedFor.push(msg.sender);
+//        } else {
+//            voter_.voteArrayPosition = votedAgainst.length;
+//            votedAgainst.push(msg.sender);
+//        }
 
 
         vote_.voters[_voter].voterState = _supports ? VoterState.Yea : VoterState.Nay;
