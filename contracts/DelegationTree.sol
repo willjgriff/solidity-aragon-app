@@ -1,12 +1,13 @@
 pragma solidity ^0.4.24;
 
-import "openzeppelin-solidity/contracts/token/ERC20/IERC20.sol";
+import "@aragon/apps-shared-minime/contracts/MiniMeToken.sol";
 import "./libraries/ArrayLib.sol";
 
 // Add events, will need for UI.
 // Add error messages.
 // Add topic, editable by owner.
 // Use SafeMath.
+// Don't forget init.
 contract DelegationTree {
 
     using ArrayLib for address[];
@@ -80,7 +81,7 @@ contract DelegationTree {
     }
 
     // Recursive function limited by EVM stack depth, at least works for depth of 8
-    function voteWeightOfAddress(address _address, IERC20 _token) public view returns (uint256) {
+    function voteWeightOfAddress(address _address, MiniMeToken _token) public view returns (uint256) {
         uint256 totalWeight = 0;
         DelegateVoter storage voter = delegateVoters[_address];
         address[] storage voterDelegatedFrom = voter.delegatedFrom;

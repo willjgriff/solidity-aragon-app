@@ -1,10 +1,12 @@
 pragma solidity 0.4.24;
+pragma experimental ABIEncoderV2;
 
 import "@aragon/os/contracts/apps/AragonApp.sol";
 import "@aragon/os/contracts/lib/math/SafeMath.sol";
 import "@aragon/os/contracts/lib/math/SafeMath64.sol";
 import "@aragon/apps-shared-minime/contracts/MiniMeToken.sol";
 import "./DelegationTree.sol";
+import "./libraries/ArrayLib.sol";
 
 /**
  * Each vote still contains min accepted quorum and support required values which can be displayed on the UI. However, they're not used to
@@ -14,6 +16,7 @@ import "./DelegationTree.sol";
 contract DelegatedVoting is AragonApp {
     using SafeMath for uint256;
     using SafeMath64 for uint64;
+    using ArrayLib for address[];
 
     bytes32 public constant CREATE_VOTES_ROLE = keccak256("CREATE_VOTES_ROLE");
     bytes32 public constant MODIFY_SUPPORT_ROLE = keccak256("MODIFY_SUPPORT_ROLE");
@@ -51,7 +54,6 @@ contract DelegatedVoting is AragonApp {
     struct Voter {
         VoterState voterState;
         uint voteArrayPosition;
-        bool hasVoted;
     }
 
     MiniMeToken public token;
@@ -131,6 +133,7 @@ contract DelegatedVoting is AragonApp {
 
     /**
     * @notice Create a new vote about "`_metadata`"
+    * @param _delegationTree DelegationTree contract
     * @param _metadata Vote metadata
     * @return voteId Id for newly created vote
     */
@@ -140,6 +143,7 @@ contract DelegatedVoting is AragonApp {
 
     /**
     * @notice Create a new vote about "`_metadata`"
+    * @param _delegationTree DelegationTree contract
     * @param _metadata Vote metadata
     * @param _castVote Whether to also cast newly created vote
     * @return voteId id for newly created vote
@@ -166,7 +170,6 @@ contract DelegatedVoting is AragonApp {
 
     function canVote(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (bool) {
         Vote storage vote_ = votes[_voteId];
-
         return _isVoteOpen(vote_) && token.balanceOfAt(_voter, vote_.snapshotBlock) > 0;
     }
 
@@ -203,7 +206,7 @@ contract DelegatedVoting is AragonApp {
         return votes[_voteId].votedAgainst;
     }
 
-    function getVoter(uint256 _voteId, address _voted) public view voteExists(_voteId) returns (Voter) {
+    function getVoter(uint256 _voteId, address _voter) public view voteExists(_voteId) returns (Voter) {
         return votes[_voteId].voters[_voter];
     }
 
@@ -217,7 +220,7 @@ contract DelegatedVoting is AragonApp {
     {
         require(_delegationTree != address(0), ERROR_NO_DELEGATION_TREE);
 
-        uint256 votingPower = token.totalSupplyAt(vote_.snapshotBlock); // vote_.snapshotBlock will always be 0. This is some weird lookahead referencing. Can't do this in 0.5
+        uint256 votingPower = token.totalSupplyAt(vote_.snapshotBlock); // vote_.snapshotBlock will always be 0. Also uses some weird lookahead referencing. Can't do this in 0.5
         require(votingPower > 0, ERROR_NO_VOTING_POWER);
 
         voteId = votesLength++;
@@ -241,10 +244,6 @@ contract DelegatedVoting is AragonApp {
         return delegateVoterAddress_ == address(0);
     }
 
-    function _notVotedInDirection(Voter memory _voter, bool _supports) internal view returns (bool) {
-        return !(_voter.hasVoted && _voter.votedState == _supports);
-    }
-
     function _vote(
         uint256 _voteId,
         bool _supports,
@@ -255,38 +254,45 @@ contract DelegatedVoting is AragonApp {
         Voter storage voter_ = vote_.voters[msg.sender];
 
         require(_isUndelegatedVoter(msg.sender, vote_.delegationTree), ERROR_VOTER_HAS_DELEGATED);
-        require(_notVotedInDirection(voter_, _supports), ERROR_ALREADY_VOTED);
+        require(voter_.voterState != (_supports ? VoterState.Yea : VoterState.Nay), ERROR_ALREADY_VOTED);
 
-//        if (voter_.hasVoted) {
-//            if (voter_.inFavour) {
-//                votedFor._removeElement(voter_.voteArrayPosition);
-//                _updateVoteArrayStoredIndices(votedFor, voter_.voteArrayPosition);
-//            } else {
-//                votedAgainst._removeElement(voter_.voteArrayPosition);
-//                _updateVoteArrayStoredIndices(votedAgainst, voter_.voteArrayPosition);
-//            }
-//        } else {
-//            voter_.hasVoted = true;
-//            voter_.inFavour = _inFavour;
-//        }
-//
-//        if (_inFavour) {
-//            voter_.voteArrayPosition = votedFor.length;
-//            votedFor.push(msg.sender);
-//        } else {
-//            voter_.voteArrayPosition = votedAgainst.length;
-//            votedAgainst.push(msg.sender);
-//        }
+        // If already voted and changing vote, remove address from the relevant array of voted address's. Then update
+        // the location in the array for the last address in the array that was moved into the deleted address's location.
+        if (voter_.voterState == VoterState.Yea) {
+            vote_.votedFor._removeElement(voter_.voteArrayPosition);
+            _updateVoteArrayStoredIndices(_voteId, vote_.votedFor, voter_.voteArrayPosition);
+        } else if (voter_.voterState == VoterState.Nay) {
+            vote_.votedAgainst._removeElement(voter_.voteArrayPosition);
+            _updateVoteArrayStoredIndices(_voteId, vote_.votedAgainst, voter_.voteArrayPosition);
+        }
 
+        // Add the voter address and record the position in the relevant array. Used when the voter wishes to
+        // change their vote and must be removed from the voted array.
+        if (_supports) {
+            voter_.voteArrayPosition = vote_.votedFor.length;
+            vote_.votedFor.push(msg.sender);
+        } else {
+            voter_.voteArrayPosition = vote_.votedAgainst.length;
+            vote_.votedAgainst.push(msg.sender);
+        }
 
-        vote_.voters[_voter].voterState = _supports ? VoterState.Yea : VoterState.Nay;
+        voter_.voterState = _supports ? VoterState.Yea : VoterState.Nay;
 
         emit CastVote(_voteId, _voter, _supports);
 
     }
 
+    function _updateVoteArrayStoredIndices(uint256 _voteId, address[] memory _voteArray, uint256 _voteArrayPosition) private {
+        if (_voteArray.length > 0) {
+            Vote storage vote_ = votes[_voteId];
+            address movedVoterAddress = _voteArray[_voteArrayPosition];
+            Voter storage movedVoter_ = vote_.voters[movedVoterAddress];
+            movedVoter_.voteArrayPosition = _voteArrayPosition;
+        }
+    }
+
     function _isVoteOpen(Vote storage vote_) internal view returns (bool) {
-        return getTimestamp64() < vote_.startDate.add(voteTime);
+        return getTimestamp64() <= vote_.startDate.add(voteTime);
     }
 
     /**
@@ -299,5 +305,36 @@ contract DelegatedVoting is AragonApp {
 
         uint256 computedPct = _value.mul(PCT_BASE) / _total;
         return computedPct > _pct;
+    }
+
+    /**
+    * @notice Get total weight voted in support of vote.
+    * @param _voteId VoteId
+    * @return total voted in support
+    */
+    function totalVotedFor(uint256 _voteId) public view returns (uint) {
+        Vote storage vote_ = votes[_voteId];
+        return _totalVotedWeight(_voteId, vote_.votedFor);
+    }
+
+    /**
+    * @notice Get total weight voted not in support of vote.
+    * @param _voteId VoteId
+    * @return total voted not in support
+    */
+    function totalVotedAgainst(uint256 _voteId) public view returns (uint) {
+        Vote storage vote_ = votes[_voteId];
+        return _totalVotedWeight(_voteId, vote_.votedAgainst);
+    }
+
+    function _totalVotedWeight(uint256 _voteId, address[] memory voteArray) private view returns (uint) {
+        Vote storage vote_ = votes[_voteId];
+        uint256 totalWeight = 0;
+
+        for (uint256 i = 0; i < voteArray.length; i++) {
+            // Must include snapshot block for calculation
+            totalWeight += vote_.delegationTree.voteWeightOfAddress(voteArray[i], token);
+        }
+        return totalWeight;
     }
 }
